@@ -1,6 +1,6 @@
 #!/bin/bash
 
-declare triple='arm-tizen-linux-gnueabi'
+declare triplet='arm-tizenwearable-linux-gnueabi'
 
 declare output_format='elf32-littlearm'
 declare ld='ld-linux.so.3'

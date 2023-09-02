@@ -1,6 +1,6 @@
 #!/bin/bash
 
-declare triple='aarch64-tizen-linux-gnu'
+declare triplet='aarch64-tizeniot-linux-gnu'
 
 declare output_format='elf64-littleaarch64'
 declare ld='ld-linux-aarch64.so.1'

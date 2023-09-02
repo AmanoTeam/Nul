@@ -1,6 +1,6 @@
 #!/bin/bash
 
-declare triple='i386-tizen-linux-gnueabi'
+declare triplet='i386-tizenmobile-linux-gnueabi'
 
 declare output_format='elf32-i386'
 declare ld='ld-linux.so.2'

@@ -1,12 +1,12 @@
 #!/bin/bash
 
-set -e
-set -u
+set -eu
 
 declare -r current_source_directory="${PWD}"
 
-declare -r toolchain_directory='/tmp/unknown-unknown-tizen'
-declare -r toolchain_tarball="$(pwd)/tizen-cross.tar.xz"
+declare -r revision="$(git rev-parse --short HEAD)"
+
+declare -r toolchain_directory='/tmp/nul'
 
 declare -r gmp_tarball='/tmp/gmp.tar.xz'
 declare -r gmp_directory='/tmp/gmp-6.2.1'
@@ -18,41 +18,62 @@ declare -r mpc_tarball='/tmp/mpc.tar.gz'
 declare -r mpc_directory='/tmp/mpc-1.3.1'
 
 declare -r binutils_tarball='/tmp/binutils.tar.xz'
-declare -r binutils_directory='/tmp/binutils-2.40'
+declare -r binutils_directory='/tmp/binutils-2.41'
 
-declare -r gcc_tarball='/tmp/gcc.tar.xz'
-declare -r gcc_directory='/tmp/gcc-12.2.0'
+declare -r gcc_tarball='/tmp/gcc.tar.gz'
+declare -r gcc_directory='/tmp/gcc-13.2.0'
 
-declare -r cflags='-Os -s -DNDEBUG'
+declare -r optflags='-Os'
+declare -r linkflags='-Wl,-s'
+
+declare -r max_jobs="$(($(nproc) * 8))"
+
+declare build_type="${1}"
+
+if [ -z "${build_type}" ]; then
+	build_type='native'
+fi
+
+declare is_native='0'
+
+if [ "${build_type}" == 'native' ]; then
+	is_native='1'
+fi
+
+declare OBGGCC_TOOLCHAIN='/tmp/obggcc-toolchain'
+declare CROSS_COMPILE_TRIPLET=''
+
+declare cross_compile_flags=''
+
+if ! (( is_native )); then
+	source "./submodules/obggcc/toolchains/${build_type}.sh"
+	cross_compile_flags+="--host=${CROSS_COMPILE_TRIPLET}"
+fi
 
 if ! [ -f "${gmp_tarball}" ]; then
-	wget --no-verbose 'https://mirrors.kernel.org/gnu/gmp/gmp-6.2.1.tar.xz' --output-document="${gmp_tarball}"
+	curl --connect-timeout '10' --retry '15' --retry-all-errors --fail --silent --url 'https://mirrors.kernel.org/gnu/gmp/gmp-6.2.1.tar.xz' --output "${gmp_tarball}"
 	tar --directory="$(dirname "${gmp_directory}")" --extract --file="${gmp_tarball}"
 fi
 
 if ! [ -f "${mpfr_tarball}" ]; then
-	wget --no-verbose 'https://mirrors.kernel.org/gnu/mpfr/mpfr-4.2.0.tar.xz' --output-document="${mpfr_tarball}"
+	curl --connect-timeout '10' --retry '15' --retry-all-errors --fail --silent --url 'https://mirrors.kernel.org/gnu/mpfr/mpfr-4.2.0.tar.xz' --output "${mpfr_tarball}"
 	tar --directory="$(dirname "${mpfr_directory}")" --extract --file="${mpfr_tarball}"
 fi
 
 if ! [ -f "${mpc_tarball}" ]; then
-	wget --no-verbose 'https://mirrors.kernel.org/gnu/mpc/mpc-1.3.1.tar.gz' --output-document="${mpc_tarball}"
+	curl --connect-timeout '10' --retry '15' --retry-all-errors --fail --silent --url 'https://mirrors.kernel.org/gnu/mpc/mpc-1.3.1.tar.gz' --output "${mpc_tarball}"
 	tar --directory="$(dirname "${mpc_directory}")" --extract --file="${mpc_tarball}"
 fi
 
 if ! [ -f "${binutils_tarball}" ]; then
-	wget --no-verbose 'https://mirrors.kernel.org/gnu/binutils/binutils-2.40.tar.xz' --output-document="${binutils_tarball}"
+	curl --connect-timeout '10' --retry '15' --retry-all-errors --fail --silent --url 'https://mirrors.kernel.org/gnu/binutils/binutils-2.41.tar.xz' --output "${binutils_tarball}"
 	tar --directory="$(dirname "${binutils_directory}")" --extract --file="${binutils_tarball}"
 fi
 
 if ! [ -f "${gcc_tarball}" ]; then
-	wget --no-verbose 'https://mirrors.kernel.org/gnu/gcc/gcc-12.2.0/gcc-12.2.0.tar.xz' --output-document="${gcc_tarball}"
+	curl --connect-timeout '10' --retry '15' --retry-all-errors --fail --silent --url 'https://mirrors.kernel.org/gnu/gcc/gcc-13.2.0/gcc-13.2.0.tar.xz' --output "${gcc_tarball}"
 	tar --directory="$(dirname "${gcc_directory}")" --extract --file="${gcc_tarball}"
 fi
-
-while read file; do
-	sed -i "s/-O2/${cflags}/g" "${file}"
-done <<< "$(find '/tmp' -type 'f' -wholename '*configure')"
 
 [ -d "${gmp_directory}/build" ] || mkdir "${gmp_directory}/build"
 
@@ -61,9 +82,13 @@ cd "${gmp_directory}/build"
 ../configure \
 	--prefix="${toolchain_directory}" \
 	--enable-shared \
-	--enable-static
+	--enable-static \
+	${cross_compile_flags} \
+	CFLAGS="${optflags}" \
+	CXXFLAGS="${optflags}" \
+	LDFLAGS="${linkflags}"
 
-make all --jobs="$(nproc)"
+make all --jobs
 make install
 
 [ -d "${mpfr_directory}/build" ] || mkdir "${mpfr_directory}/build"
@@ -74,9 +99,13 @@ cd "${mpfr_directory}/build"
 	--prefix="${toolchain_directory}" \
 	--with-gmp="${toolchain_directory}" \
 	--enable-shared \
-	--enable-static
+	--enable-static \
+	${cross_compile_flags} \
+	CFLAGS="${optflags}" \
+	CXXFLAGS="${optflags}" \
+	LDFLAGS="${linkflags}"
 
-make all --jobs="$(nproc)"
+make all --jobs
 make install
 
 [ -d "${mpc_directory}/build" ] || mkdir "${mpc_directory}/build"
@@ -87,17 +116,21 @@ cd "${mpc_directory}/build"
 	--prefix="${toolchain_directory}" \
 	--with-gmp="${toolchain_directory}" \
 	--enable-shared \
-	--enable-static
+	--enable-static \
+	${cross_compile_flags} \
+	CFLAGS="${optflags}" \
+	CXXFLAGS="${optflags}" \
+	LDFLAGS="${linkflags}"
 
-make all --jobs="$(nproc)"
+make all --jobs
 make install
 
 declare -ra targets=(
+	'wearable-device'
+	'wearable-emulator'
 	'iot-headless-device'
 	'iot-headed-device-64'
 	'iot-headed-device-32'
-	'wearable-device'
-	'wearable-emulator'
 	'mobile-device'
 	'mobile-emulator'
 )
@@ -105,32 +138,50 @@ declare -ra targets=(
 for target in "${targets[@]}"; do
 	source "${current_source_directory}/${target}.sh"
 	
-	declare url="https://github.com/AmanoTeam/t1z3n-sysr00t/releases/latest/download/${target}.tar.xz"
+	declare sysroot_filename='/tmp/sysroot.tar.xz'
+	declare sysroot_directory="/tmp/${target}"
 	
-	declare sysroot_tarball='/tmp/sysroot.tar.xz'
-	declare sysroot_directory="${toolchain_directory}/${device_type}/${triple}"
+	curl \
+		--connect-timeout '10' \
+		--retry '15' \
+		--retry-all-errors \
+		--fail \
+		--silent \
+		--location \
+		--output "${sysroot_filename}" \
+		--url "https://github.com/AmanoTeam/tizen-sysroot/releases/latest/download/${target}.tar.xz"
 	
-	mkdir --parent "${sysroot_directory}"
+	[ -d "${sysroot_directory}" ] || mkdir "${sysroot_directory}"
 	
-	wget --no-verbose "${url}" --output-document="${sysroot_tarball}"
-	tar --directory="${sysroot_directory}" --extract --file="${sysroot_tarball}"
+	tar --extract --directory="${sysroot_directory}" --file="${sysroot_filename}"
+	
+	[ -d "${toolchain_directory}/${triplet}/lib" ] || mkdir --parent "${toolchain_directory}/${triplet}/lib"
+	
+	cp --recursive "${sysroot_directory}/lib" "${toolchain_directory}/${triplet}"
 	
 	if [ -d "${sysroot_directory}/lib64" ]; then
-		mv "${sysroot_directory}/lib64/"* "${sysroot_directory}/lib"
-		rmdir "${sysroot_directory}/lib64"
+		cp --recursive "${sysroot_directory}/lib64/"* "${toolchain_directory}/${triplet}/lib"
 	fi
+	
+	cp --recursive "${sysroot_directory}/usr/lib" "${toolchain_directory}/${triplet}"
 	
 	if [ -d "${sysroot_directory}/usr/lib64" ]; then
-		mv "${sysroot_directory}/usr/lib64/"* "${sysroot_directory}/usr/lib"
-		rmdir "${sysroot_directory}/usr/lib64"
+		cp --recursive "${sysroot_directory}/usr/lib64/"* "${toolchain_directory}/${triplet}/lib"
 	fi
 	
-	cp --recursive "${sysroot_directory}/usr/lib" "${sysroot_directory}"
-	cp --recursive "${sysroot_directory}/usr/include" "${sysroot_directory}"
+	cp --recursive "${sysroot_directory}/usr/include" "${toolchain_directory}/${triplet}"
 	
-	rm --recursive "${sysroot_directory}/usr"
+	while read name; do
+		if [ -f "${name}" ]; then
+			chmod 644 "${name}"
+		elif [ -d "${name}" ]; then
+			chmod 755 "${name}"
+		fi
+	done <<< "$(find "${toolchain_directory}/${triplet}")"
 	
-	echo -e "OUTPUT_FORMAT(${output_format})\nGROUP ( ./libc.so.6 ./libc_nonshared.a  AS_NEEDED ( ./${ld} ) )" > "${sysroot_directory}/lib/libc.so"
+	find "${toolchain_directory}/${triplet}/lib" -maxdepth '1' -mindepth '1' -type 'd' -exec rm --recursive {} \;
+	
+	sed --in-place 's|/usr/lib64|.|g; s|/lib64/|./|g; s|/usr/lib|.|g; s|/lib/|./|g' "${toolchain_directory}/${triplet}/lib/libc.so"
 	
 	[ -d "${binutils_directory}/build" ] || mkdir "${binutils_directory}/build"
 	
@@ -138,28 +189,39 @@ for target in "${targets[@]}"; do
 	rm --force --recursive ./*
 	
 	../configure \
-		--target="${triple}" \
-		--prefix="${toolchain_directory}/${device_type}" \
+		--target="${triplet}" \
+		--prefix="${toolchain_directory}" \
 		--enable-gold \
-		--enable-ld
+		--enable-ld \
+		--enable-lto \
+		--disable-gprofng \
+		--with-static-standard-libraries \
+		--with-sysroot="${toolchain_directory}/${triplet}" \
+		${cross_compile_flags} \
+		CFLAGS="${optflags}" \
+		CXXFLAGS="${optflags}" \
+		LDFLAGS="${linkflags}"
 	
-	make all --jobs="$(nproc)"
+	make all --jobs="${max_jobs}"
 	make install
 	
 	[ -d "${gcc_directory}/build" ] || mkdir "${gcc_directory}/build"
+	
 	cd "${gcc_directory}/build"
 	
 	rm --force --recursive ./*
 	
 	../configure \
-		--target="${triple}" \
-		--prefix="${toolchain_directory}/${device_type}" \
+		--target="${triplet}" \
+		--prefix="${toolchain_directory}" \
 		--with-linker-hash-style='gnu' \
 		--with-gmp="${toolchain_directory}" \
 		--with-mpc="${toolchain_directory}" \
 		--with-mpfr="${toolchain_directory}" \
-		--with-system-zlib \
-		--with-bugurl='https://github.com/AmanoTeam/t1z3ncr0ss/issues' \
+		--with-bugurl='https://github.com/AmanoTeam/Nul/issues' \
+		--with-pkgversion="Nul v0.1-${revision}" \
+		--with-sysroot="${toolchain_directory}/${triplet}" \
+		--with-native-system-header-dir='/include' \
 		--enable-__cxa_atexit \
 		--enable-cet='auto' \
 		--enable-checking='release' \
@@ -171,26 +233,42 @@ for target in "${targets[@]}"; do
 		--enable-link-serialization='1' \
 		--enable-linker-build-id \
 		--enable-lto \
-		--disable-multilib \
-		--enable-plugin \
 		--enable-shared \
 		--enable-threads='posix' \
 		--enable-libssp \
-		--disable-libstdcxx-pch \
-		--disable-werror \
 		--enable-languages='c,c++' \
-		--disable-libgomp \
-		--disable-bootstrap \
-		--without-headers \
 		--enable-ld \
 		--enable-gold \
-		--with-pic \
-		--with-sysroot="${sysroot_directory}" \
-		--with-native-system-header-dir='/include' \
-		--with-gcc-major-version-only
+		--disable-libgomp \
+		--disable-bootstrap \
+		--disable-libstdcxx-pch \
+		--disable-werror \
+		--disable-multilib \
+		--disable-plugin \
+		--disable-nls \
+		--without-headers \
+		${cross_compile_flags} \
+		CFLAGS="${optflags}" \
+		CXXFLAGS="${optflags}" \
+		LDFLAGS="-Wl,-rpath-link,${OBGGCC_TOOLCHAIN}/${CROSS_COMPILE_TRIPLET}/lib ${linkflags}"
 	
-	LD_LIBRARY_PATH="${toolchain_directory}/lib" PATH="${PATH}:${toolchain_directory}/bin" make CFLAGS_FOR_TARGET="${cflags}" CXXFLAGS_FOR_TARGET="${cflags}" all --jobs=16 #"$(nproc)"
+	LD_LIBRARY_PATH="${toolchain_directory}/lib" PATH="${PATH}:${toolchain_directory}/bin" make \
+		CFLAGS_FOR_TARGET="${optflags} ${linkflags}" \
+		CXXFLAGS_FOR_TARGET="${optflags} ${linkflags}" \
+		all --jobs="${max_jobs}"
 	make install
+	
+	cd "${toolchain_directory}/${triplet}/bin"
+	
+	for name in *; do
+		rm "${name}"
+		ln -s "../../bin/${triplet}-${name}" "${name}"
+	done
+	
+	rm --recursive "${toolchain_directory}/share"
+	rm --recursive "${toolchain_directory}/lib/gcc/${triplet}/"*"/include-fixed"
+	
+	patchelf --add-rpath '$ORIGIN/../../../../lib' "${toolchain_directory}/libexec/gcc/${triplet}/"*"/cc1"
+	patchelf --add-rpath '$ORIGIN/../../../../lib' "${toolchain_directory}/libexec/gcc/${triplet}/"*"/cc1plus"
+	patchelf --add-rpath '$ORIGIN/../../../../lib' "${toolchain_directory}/libexec/gcc/${triplet}/"*"/lto1"
 done
-
-tar --directory="$(dirname "${toolchain_directory}")" --create --file=- "$(basename "${toolchain_directory}")" |  xz --threads=0 --compress -9 > "${toolchain_tarball}"
